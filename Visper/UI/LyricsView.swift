@@ -5,16 +5,19 @@ struct LyricsView: View {
     let lines: [String]
     let tentative: String
 
+    static let maxLines = 200
+
     @State private var following = true
     @State private var position = ScrollPosition(edge: .bottom)
 
     var body: some View {
-        // ponytail: 全行を VStack に並べる。2時間分で重くなったら LazyVStack にする。
+        // ponytail: 描画は最新の maxLines 行だけ（更新コストを一定に保つ）。それより前はメインウィンドウで読む。
+        // ライブ表示で全行をさかのぼりたくなったら LazyVStack にする。
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                ForEach(lines.indices.suffix(Self.maxLines), id: \.self) { index in
                     let isCurrent = index == lines.count - 1
-                    Text(line)
+                    Text(lines[index])
                         .font(isCurrent ? .title2.bold() : .body)
                         .foregroundStyle(isCurrent ? .primary : .secondary)
                         .accessibilityIdentifier("lyricsLine")
