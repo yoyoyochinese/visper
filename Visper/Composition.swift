@@ -21,9 +21,13 @@ final class AppEnvironment {
         container = try! ModelContainer(
             for: Session.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: fake))
-        // 統合時に実装へ差し替える: SystemAudioCapture / WhisperEngine
-        audio = FakeAudioCapture()
-        transcriber = ScriptedTranscriber(liveScript: Self.longScript, finalScript: Self.demoScript, lineInterval: 1, finalDelay: 1)
+        if fake {
+            audio = FakeAudioCapture()
+            transcriber = ScriptedTranscriber(liveScript: Self.longScript, finalScript: Self.demoScript, lineInterval: 1, finalDelay: 1)
+        } else {
+            audio = SystemAudioCapture()
+            transcriber = WhisperEngine()
+        }
         controller = SessionController(audio: audio, transcriber: transcriber, context: container.mainContext)
 
         if Self.isUITesting {
@@ -42,8 +46,9 @@ final class AppEnvironment {
             }
         }
         Task {
-            await controller.recoverInterrupted()
+            // モデルが揃う前に最終パスを始めると失敗扱いになるので、先に準備する。
             await transcriber.prepareModels()
+            await controller.recoverInterrupted()
         }
     }
 
