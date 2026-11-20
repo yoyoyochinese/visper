@@ -86,6 +86,62 @@ final class SessionControllerTests: XCTestCase {
         XCTAssertEqual(session.sortedSegments.map(\.text), ["live"])
     }
 
+    /// レビュー指摘: 待ち行列に別の出来事があった後でも、録音開始で実行中の最終パスが中断される。
+    func testRecordingCancelsRunningFinalPassAfterQueueEvent() async throws {
+        transcriber.finalDelay = 0.5
+        let other = Session(source: .mic, language: .ja, startedAt: .now.addingTimeInterval(-1000))
+        other.status = .done
+        container.mainContext.insert(other)
+        try await record()
+        try await wait("finalizing") { controller.finalizingID != nil }
+        controller.delete(other)
+        await controller.start(source: .mic, language: .ja)
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertTrue(transcriber.finalCalls.isEmpty, "録音中に最終パスが完走した")
+        await controller.stop()
+        try await wait("both final") { try sessions().allSatisfy { $0.status == .done } }
+        XCTAssertEqual(transcriber.finalCalls.count, 2)
+    }
+
+    /// レビュー指摘: 最終パス中のセッションを削除したら、その最終パスは完走しない。
+    func testDeletingFinalizingSessionCancelsIt() async throws {
+        transcriber.finalDelay = 0.5
+        let other = Session(source: .mic, language: .ja, startedAt: .now.addingTimeInterval(-1000))
+        other.status = .done
+        container.mainContext.insert(other)
+        try await record()
+        try await wait("finalizing") { controller.finalizingID != nil }
+        let target = try XCTUnwrap(sessions().last)
+        controller.delete(other)
+        controller.delete(target)
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertTrue(transcriber.finalCalls.isEmpty)
+        XCTAssertEqual(try sessions().count, 0)
+        XCTAssertNil(controller.finalizingID)
+        XCTAssertNil(controller.lastError)
+    }
+
+    /// 停止していないのに音声ストリームが終わったら、自動で停止して最終パスに回す。
+    func testStreamEndingWhileRecordingStopsSession() async throws {
+        await controller.start(source: .mic, language: .ja)
+        try await wait("live lines") { controller.liveLines.count == 2 }
+        audio.endStream()
+        try await wait("auto stop") { !controller.isRecording }
+        try await wait("final") { try sessions().first?.status == .done }
+    }
+
+    /// 変換は済んだが状態の保存前に落ちた場合、変換済みの .m4a をそのまま使う。
+    func testRecoveryAdoptsAlreadyConvertedFile() async throws {
+        let session = Session(source: .mic, language: .ja)
+        container.mainContext.insert(session)
+        let m4a = (session.audioFileName as NSString).deletingPathExtension + ".m4a"
+        FileManager.default.createFile(atPath: AudioStore.url(for: m4a).path, contents: Data())
+        audio.recoverable = false
+        await controller.recoverInterrupted()
+        try await wait("final") { session.status == .done }
+        XCTAssertEqual(session.audioFileName, m4a)
+    }
+
     func testMarkdown() {
         let session = Session(source: .mic, language: .ja)
         session.title = "輪講"

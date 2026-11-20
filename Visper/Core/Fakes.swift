@@ -22,6 +22,9 @@ final class FakeAudioCapture: AudioCapturing {
         return url!
     }
 
+    /// デバイスが外れたときのように、停止を待たずにストリームを終える。
+    func endStream() { continuation?.finish() }
+
     func recover(recordingAt url: URL) async -> URL? {
         recoverable && FileManager.default.fileExists(atPath: url.path) ? url : nil
     }

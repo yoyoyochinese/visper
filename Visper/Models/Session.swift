@@ -38,7 +38,14 @@ final class Session {
 
     func append(_ new: [TranscribedSegment]) {
         for s in new {
-            segments.append(Segment(start: s.start, end: s.end, text: s.text))
+            let segment = Segment(start: s.start, end: s.end, text: s.text)
+            if let modelContext {
+                // 配列に追記すると行数に比例して遅くなるので、保存済みのセッションでは行を直接挿入する。
+                segment.session = self
+                modelContext.insert(segment)
+            } else {
+                segments.append(segment)
+            }
         }
     }
 }

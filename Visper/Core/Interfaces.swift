@@ -10,6 +10,8 @@ protocol AudioCapturing: AnyObject {
     func start(source: AudioSource, micDeviceUID: String?, recordingTo url: URL) async throws -> AsyncStream<[Float]>
 
     /// 取り込みを止めてストリームを終了し、再生用の音声ファイル（.m4a）の URL を返す。
+    /// 録音中に取り込みや書き込みが失敗した場合、実装はその時点でストリームを終了する。
+    /// その後の `stop()` は、そこまでの録音を可能なら .m4a に変換したうえで、保存しておいたエラーを投げる。
     func stop() async throws -> URL
 
     /// 異常終了で残った録音ファイルを再生用ファイルに変換する。使えなければ nil。

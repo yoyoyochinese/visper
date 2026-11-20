@@ -3,6 +3,7 @@ options:
   deploymentTarget:
     macOS: "27.0"
   createIntermediateGroups: true
+  developmentLanguage: ja
 packages:
   WhisperKit:
     url: https://github.com/argmaxinc/WhisperKit

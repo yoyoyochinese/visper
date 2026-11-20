@@ -37,6 +37,7 @@ final class AppEnvironment {
         guard !fake else { return }
         controller.onFinalized = { session in
             let center = UNUserNotificationCenter.current()
+            center.delegate = ForegroundNotifications.shared
             let content = UNMutableNotificationContent()
             content.title = "文字起こしが完了しました"
             content.body = session.title
@@ -77,5 +78,16 @@ final class AppEnvironment {
             })
         }
         try? container.mainContext.save()
+    }
+}
+
+/// Visper が最前面のときも完了通知を表示する。
+private final class ForegroundNotifications: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = ForegroundNotifications()
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter, willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        .banner
     }
 }
