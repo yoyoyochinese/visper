@@ -1,0 +1,70 @@
+name: Visper
+options:
+  deploymentTarget:
+    macOS: "27.0"
+  createIntermediateGroups: true
+packages:
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit
+    from: 1.1.1
+settings:
+  base:
+    SWIFT_VERSION: "5"
+    DEVELOPMENT_TEAM: 9GCZ395FHV
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  Visper:
+    type: application
+    platform: macOS
+    sources: [Visper]
+    dependencies:
+      - package: WhisperKit
+        product: WhisperKit
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.elverum.visper
+      ENABLE_HARDENED_RUNTIME: YES
+    info:
+      path: Visper/Info.plist
+      properties:
+        CFBundleDisplayName: Visper
+        NSMicrophoneUsageDescription: ゼミの音声を文字起こしするためにマイクを使用します。
+        NSAudioCaptureUsageDescription: Mac で再生中の音声を文字起こしするために使用します。
+    entitlements:
+      path: Visper/Visper.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.device.audio-input: true
+        com.apple.security.network.client: true
+  VisperTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [VisperTests]
+    dependencies:
+      - target: Visper
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: com.elverum.visper.tests
+      TEST_HOST: $(BUILT_PRODUCTS_DIR)/Visper.app/Contents/MacOS/Visper
+      BUNDLE_LOADER: $(TEST_HOST)
+  VisperUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources: [VisperUITests]
+    dependencies:
+      - target: Visper
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: com.elverum.visper.uitests
+      TEST_TARGET_NAME: Visper
+schemes:
+  Visper:
+    build:
+      targets:
+        Visper: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [VisperTests, VisperUITests]

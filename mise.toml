@@ -1,0 +1,21 @@
+[tools]
+xcodegen = "2.47.0"
+
+[tasks.gen]
+description = "project.yml から Visper.xcodeproj を生成"
+run = "xcodegen generate --quiet"
+
+[tasks.build]
+description = "Debug ビルド"
+depends = ["gen"]
+run = "xcodebuild -project Visper.xcodeproj -scheme Visper -configuration Debug -derivedDataPath build -quiet build"
+
+[tasks.run]
+description = "ビルドして起動"
+depends = ["build"]
+run = "open build/Build/Products/Debug/Visper.app"
+
+[tasks.test]
+description = "ロジックのテストと UI テスト"
+depends = ["gen"]
+run = "xcodebuild -project Visper.xcodeproj -scheme Visper -derivedDataPath build -quiet test"
