@@ -19,3 +19,17 @@ run = "open build/Build/Products/Debug/Visper.app"
 description = "ロジックのテストと UI テスト"
 depends = ["gen"]
 run = "xcodebuild -project Visper.xcodeproj -scheme Visper -derivedDataPath build -quiet test"
+
+[tasks.dmg]
+description = "Release ビルドを作り、アプリケーションフォルダへドラッグして入れるディスクイメージを開く"
+depends = ["gen"]
+run = """
+set -e
+xcodebuild -project Visper.xcodeproj -scheme Visper -configuration Release -derivedDataPath build -quiet build
+rm -rf build/dmg build/Visper.dmg
+mkdir -p build/dmg
+cp -R build/Build/Products/Release/Visper.app build/dmg/
+ln -s /Applications build/dmg/Applications
+hdiutil create -volname Visper -srcfolder build/dmg -ov -format UDZO -quiet build/Visper.dmg
+open build/Visper.dmg
+"""

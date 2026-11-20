@@ -26,6 +26,7 @@ targets:
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.elverum.visper
       ENABLE_HARDENED_RUNTIME: YES
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: Visper/Info.plist
       properties:
