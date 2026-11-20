@@ -34,9 +34,12 @@ final class ModelHolder<Model> {
         // ponytail: 読み込み中に別の use が重なると二重に読み込む。呼び出し側（ライブ1本、最終パスは直列）では
         // 起きない。並行利用が要るなら読み込みを Task にして共有する。
         if model == nil { model = try await load() }
+        // 読み込み中に中断されたら body は走らせない。読み込んだモデルは残し、タイマーで解放する。
+        try Task.checkCancellation()
         return try await body(model!)
     }
 
+    /// 分数の設定を変えても、すでに動いているタイマーには効かない。次の利用が終わった時から新しい値になる。
     private func arm() {
         let delay = delay()
         timer = Task {
