@@ -143,6 +143,13 @@ final class SettingsUITests: VisperUITestCase {
         saveScreenshot("settings", windowContaining: "glossaryEditor")
     }
 
+    func testDisconnectedMicStaysSelected() {
+        launch(["-micDeviceUID", "gone-device"])
+        openSettings()
+        let value = element("micDevicePicker").value as? String ?? ""
+        XCTAssertTrue(value.contains("未接続"), "選択中の表示: \(value)")
+    }
+
     func testGlossaryOverLimitWarning() {
         // 偽の tokenCount は文字数を返す。上限は 224。
         launch(["-glossary", String(repeating: "量", count: 225)])

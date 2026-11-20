@@ -7,6 +7,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.glossary) private var glossary = ""
     @AppStorage(SettingsKey.unloadMinutes) private var unloadMinutes = Tuning.defaultUnloadMinutes
     @AppStorage(SettingsKey.micDeviceUID) private var micDeviceUID: String?
+    @State private var devices: [AudioInputDevice] = []
     @State private var tokenCount = 0
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var launchError: String?
@@ -38,11 +39,20 @@ struct SettingsView: View {
                 }
                 Picker("マイク入力デバイス", selection: $micDeviceUID) {
                     Text("システムの既定").tag(String?.none)
-                    ForEach(env.audio.inputDevices()) { device in
+                    ForEach(devices) { device in
                         Text(device.name).tag(String?.some(device.uid))
+                    }
+                    // 保存済みのデバイスが外れていても、選択が見えるようにする（既定には切り替えない）。
+                    if let uid = micDeviceUID, !devices.contains(where: { $0.uid == uid }) {
+                        Text("\(uid)（未接続）").tag(String?.some(uid))
                     }
                 }
                 .accessibilityIdentifier("micDevicePicker")
+                .onAppear { devices = env.audio.inputDevices() }
+                // 設定ウィンドウを開き直したときにも一覧を取り直す。
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+                    devices = env.audio.inputDevices()
+                }
             }
         }
         .formStyle(.grouped)

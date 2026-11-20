@@ -56,6 +56,13 @@ struct MainView: View {
             }
         }
         .frame(minWidth: 720, minHeight: 440)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if env.controller.lastError != nil {
+                ErrorBanner(controller: env.controller)
+                    .padding(10)
+                    .background(.bar)
+            }
+        }
         .task {
             if AppEnvironment.isUITesting, CommandLine.arguments.contains("-lyricsWindow") {
                 openWindow(id: "lyrics")
@@ -80,6 +87,7 @@ private struct SessionDetail: View {
     @State private var player = AVPlayer()
     @State private var confirmingDelete = false
     @State private var exporting = false
+    @State private var exportDocument: MarkdownFile?
 
     private var hasAudio: Bool {
         session.status != .recording && FileManager.default.fileExists(atPath: session.audioURL.path)
@@ -101,23 +109,7 @@ private struct SessionDetail: View {
             }
             .padding()
             Divider()
-            List(session.sortedSegments) { segment in
-                Button {
-                    play(from: segment.start)
-                } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        Text(formatTimestamp(segment.start))
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                        Text(segment.text)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(hasAudio ? "ここから再生" : "")
-                .accessibilityIdentifier("transcriptLine")
-            }
+            TranscriptList(sessionID: session.persistentModelID, play: play(from:))
         }
         .toolbar {
             Button(isPlaying ? "一時停止" : "再生", systemImage: isPlaying ? "pause.fill" : "play.fill") {
@@ -138,7 +130,10 @@ private struct SessionDetail: View {
             }
             .help("本文をコピー")
             .accessibilityIdentifier("copyButton")
-            Button("Markdown で書き出す", systemImage: "square.and.arrow.up") { exporting = true }
+            Button("Markdown で書き出す", systemImage: "square.and.arrow.up") {
+                exportDocument = MarkdownFile(text: session.markdown)
+                exporting = true
+            }
                 .help("Markdown で書き出す")
                 .accessibilityIdentifier("exportButton")
             Button("削除", systemImage: "trash") { confirmingDelete = true }
@@ -155,14 +150,14 @@ private struct SessionDetail: View {
         }
         .fileExporter(
             isPresented: $exporting,
-            document: MarkdownFile(text: session.markdown),
+            document: exportDocument,
             contentType: MarkdownFile.type,
             defaultFilename: session.title.replacing(/[\/:]/, with: "-")
         ) { result in
             if case .failure(let error) = result { env.controller.lastError = error.localizedDescription }
         }
-        // 停止時に .caf から .m4a へ変わるので、ファイル名で読み込み直す。
-        .task(id: session.audioFileName) {
+        // 停止時に .caf から .m4a へ変わり、状態も変わる。どちらが変わっても読み込み直す。
+        .task(id: [session.statusRaw, session.audioFileName]) {
             player.replaceCurrentItem(with: hasAudio ? AVPlayerItem(url: session.audioURL) : nil)
         }
         .onDisappear { player.pause() }
@@ -178,11 +173,16 @@ private struct SessionDetail: View {
                 .accessibilityIdentifier("provisionalNotice")
         case .finalFailed:
             HStack {
-                Label("仕上げに失敗しました。本文は暫定版です。", systemImage: "exclamationmark.triangle.fill")
+                let audioExists = FileManager.default.fileExists(atPath: session.audioURL.path)
+                Label(
+                    audioExists ? "仕上げに失敗しました。本文は暫定版です。" : "仕上げに失敗しました。音声ファイルがないため再試行できません。",
+                    systemImage: "exclamationmark.triangle.fill")
                     .font(.callout)
                     .foregroundStyle(.red)
-                Button("再試行") { env.controller.retryFinal(session) }
-                    .accessibilityIdentifier("retryButton")
+                if audioExists {
+                    Button("再試行") { env.controller.retryFinal(session) }
+                        .accessibilityIdentifier("retryButton")
+                }
             }
         case .done:
             EmptyView()
@@ -193,6 +193,36 @@ private struct SessionDetail: View {
         guard hasAudio else { return }
         player.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         player.play()
+    }
+}
+
+/// 本文の一覧。並べ替えはデータベースに任せ、行が変わったときだけ描き直す。
+private struct TranscriptList: View {
+    @Query private var segments: [Segment]
+    let play: (TimeInterval) -> Void
+
+    init(sessionID: PersistentIdentifier, play: @escaping (TimeInterval) -> Void) {
+        _segments = Query(filter: #Predicate<Segment> { $0.session?.persistentModelID == sessionID }, sort: \.start)
+        self.play = play
+    }
+
+    var body: some View {
+        List(segments) { segment in
+            Button {
+                play(segment.start)
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(formatTimestamp(segment.start))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Text(segment.text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("transcriptLine")
+        }
     }
 }
 

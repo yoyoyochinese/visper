@@ -21,7 +21,7 @@ struct MenuBarContent: View {
                     }
                     .accessibilityIdentifier("languagePicker")
                     Spacer()
-                    Button(controller.isRecording ? "停止" : "開始") {
+                    Button(controller.isStopping ? "保存中…" : controller.isRecording ? "停止" : "開始") {
                         Task {
                             if controller.isRecording {
                                 await controller.stop()
@@ -32,18 +32,23 @@ struct MenuBarContent: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(controller.isRecording ? .red : .accentColor)
-                    .disabled(!controller.isRecording && env.transcriber.modelState != .ready)
+                    .disabled(controller.isStopping || (!controller.isRecording && env.transcriber.modelState != .ready))
                     .accessibilityIdentifier("startStopButton")
                 }
                 .labelsHidden()
                 .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 6) {
-                    if controller.isRecording {
+                    if controller.isStopping {
+                        ProgressView().controlSize(.small)
+                        Text("保存中…").accessibilityIdentifier("recordingState")
+                    } else if controller.isRecording {
                         Image(systemName: "circle.fill").foregroundStyle(.red).imageScale(.small)
                         Text("録音中").accessibilityIdentifier("recordingState")
                         if let startedAt = controller.startedAt {
-                            Text(startedAt, style: .timer).monospacedDigit()
+                            TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                                Text(formatTimestamp(max(0, context.date.timeIntervalSince(startedAt)))).monospacedDigit()
+                            }
                         }
                     } else {
                         Text("待機中").accessibilityIdentifier("recordingState")
@@ -53,18 +58,7 @@ struct MenuBarContent: View {
                 .foregroundStyle(.secondary)
 
                 modelStatus
-                if let error = controller.lastError {
-                    HStack(alignment: .firstTextBaseline) {
-                        Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier("lastError")
-                        Spacer()
-                        Button("閉じる", systemImage: "xmark") { controller.lastError = nil }
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.borderless)
-                    }
-                    .font(.callout)
-                }
+                ErrorBanner(controller: controller)
             }
             .padding()
 
@@ -111,6 +105,26 @@ struct MenuBarContent: View {
     }
 }
 
+/// `lastError` の表示。ポップオーバーとメインウィンドウで共用する。
+struct ErrorBanner: View {
+    let controller: SessionController
+
+    var body: some View {
+        if let error = controller.lastError {
+            HStack(alignment: .firstTextBaseline) {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("lastError")
+                Spacer()
+                Button("閉じる", systemImage: "xmark") { controller.lastError = nil }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+            }
+            .font(.callout)
+        }
+    }
+}
+
 /// メニューバーのアイコン。録音中は赤くして経過時間を出す（D15）。
 struct MenuBarLabel: View {
     let controller: SessionController
@@ -126,7 +140,10 @@ struct MenuBarLabel: View {
     @State private var now = Date.now
 
     var body: some View {
-        if controller.isRecording, let startedAt = controller.startedAt {
+        if controller.isStopping {
+            // 保存中は経過時間を止める。
+            Image(nsImage: Self.recordingIcon)
+        } else if controller.isRecording, let startedAt = controller.startedAt {
             // Text(_:style: .timer) や TimelineView はメニューバーでは再描画が止まらなくなるので、
             // 1秒ごとに文字列を作り直す。
             HStack(spacing: 4) {
