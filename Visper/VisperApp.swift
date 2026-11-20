@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftData
 import SwiftUI
 
@@ -5,18 +6,36 @@ import SwiftUI
 struct VisperApp: App {
     @State private var env = AppEnvironment()
 
+    init() {
+        // 再生状態（timeControlStatus）を SwiftUI から監視できるようにする。
+        AVPlayer.isObservationEnabled = true
+    }
+
     var body: some Scene {
         Window("Visper", id: "main") {
-            Text("Visper")
-                .frame(minWidth: 600, minHeight: 400)
+            MainView()
                 .environment(env)
                 .modelContainer(env.container)
         }
-        MenuBarExtra("Visper", systemImage: "waveform") {
-            Text("Visper")
-                .padding()
+        MenuBarExtra {
+            MenuBarContent()
                 .environment(env)
+        } label: {
+            MenuBarLabel(controller: env.controller)
         }
         .menuBarExtraStyle(.window)
+        Settings {
+            SettingsView()
+                .environment(env)
+        }
+        // UI テスト専用（D31）。`-uiTesting -lyricsWindow` のときだけ MainView から開く。
+        Window("ライブ", id: "lyrics") {
+            MenuBarContent()
+                .environment(env)
+        }
+        .windowResizability(.contentSize)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
+        .commandsRemoved()
     }
 }
