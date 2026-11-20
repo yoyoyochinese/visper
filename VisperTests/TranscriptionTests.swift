@@ -243,3 +243,30 @@ final class TranscriptionTests: XCTestCase {
         XCTAssertEqual(logits[15].floatValue, 0)
     }
 }
+
+/// 最終パスで認識にかける区間の決め方。
+final class SpeechRegionTests: XCTestCase {
+    func regions(_ pattern: String) -> [Range<Int>] {
+        WhisperEngine.speechRegions(peaks: pattern.map { $0 == "x" ? 0.5 : 0 })
+    }
+
+    func testLongSilenceSplitsAndIsSkipped() {
+        // 先頭の無音、短い間（2秒）は区間に含め、3秒以上の無音で区切り、末尾の無音は捨てる。
+        XCTAssertEqual(regions("....xx..xx....xxx....."), [4..<10, 14..<17])
+    }
+
+    func testAllSilentGivesNothing() {
+        XCTAssertEqual(regions("........"), [])
+        XCTAssertEqual(regions(""), [])
+    }
+
+    func testLongRegionIsCutAtQuietestSecond() {
+        // 600秒鳴りっぱなしで、280秒目だけ静か（無音ではない）。
+        var peaks = [Float](repeating: 0.5, count: 600)
+        peaks[280] = 0.01
+        let result = WhisperEngine.speechRegions(peaks: peaks)
+        XCTAssertEqual(result.first, 0..<281)
+        XCTAssertEqual(result.map(\.count).reduce(0, +), 600, "切っても音のある秒は落とさない")
+        XCTAssertTrue(result.allSatisfy { $0.count <= WhisperEngine.maxRegionSeconds })
+    }
+}

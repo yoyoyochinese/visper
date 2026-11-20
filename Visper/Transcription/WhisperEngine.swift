@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreML
 import Foundation
 import Observation
@@ -14,7 +15,11 @@ final class WhisperEngine: Transcribing {
     /// 確定できないまま音声がこの秒数たまったら、そこまでの認識結果を確定して捨てる（Whisper の窓は30秒）。
     static let maxLiveBufferSeconds = 25.0
     /// これより小さい振幅しかないバッファは無音として認識にかけない。
-    static let silencePeak: Float = 0.001
+    nonisolated static let silencePeak: Float = 0.001
+    /// 最終パスで、これ以上続いた無音は認識にかけない（秒）。短い間は文脈を保つため区間に含める。
+    nonisolated static let minSilenceSeconds = 3
+    /// 最終パスで一度に読み込んで認識にかける区間の上限（秒）。
+    nonisolated static let maxRegionSeconds = 300
     /// サンドボックスのコンテナ内。
     static let downloadBase = URL.applicationSupportDirectory.appending(path: "Models")
 
@@ -82,14 +87,69 @@ final class WhisperEngine: Transcribing {
     func finalPass(audioFile: URL, options: TranscriptionOptions) async throws -> [TranscribedSegment] {
         try await finalModel.use { kit in
             let decode = try await self.configure(kit, options, fallbacks: 5)
-            // 2時間の録音を一度にメモリへ載せないよう、少しずつ読みながら処理する。
-            let results = try await kit.transcribe(
-                audioPath: audioFile.path,
-                audioInputOptions: AudioInputOptions(audioLoadingMode: .incremental),
-                decodeOptions: decode)
+            // 無音を Whisper に渡すと「ご視聴ありがとうございました」のような実在しない文が出る（システム音声は
+            // 何も鳴っていない間 0 が続く）。ライブと同じく、音のある区間だけを認識にかける。
+            // 区間ごとに読むので、2時間の録音を一度にメモリへ載せることもない。
+            let path = audioFile.path
+            let peaks = try await Task.detached { try Self.secondPeaks(path: path) }.value
+            var result: [TranscribedSegment] = []
+            for region in Self.speechRegions(peaks: peaks) {
+                try Task.checkCancellation()
+                let offset = Double(region.lowerBound), length = Double(region.count)
+                let samples = try await Task.detached {
+                    let loaded = try AudioProcessor.loadAudioAsFloatArray(fromPath: path, startTime: offset, endTime: offset + length)
+                    // 区間は秒単位なので、末尾に残る1秒未満の無音も落とす（そこだけの窓で幻聴が出る）。
+                    let end = loaded.lastIndex { abs($0) > Self.silencePeak } ?? -1
+                    return Array(loaded[...end])
+                }.value
+                result += try await kit.transcribe(audioArray: samples, decodeOptions: decode)
+                    .flatMap(\.segments).compactMap(Self.segment)
+                    // 区間の外にはみ出した時刻の行は幻聴なので捨てる。
+                    .filter { $0.start < length }
+                    .map { TranscribedSegment(start: $0.start + offset, end: min($0.end, length) + offset, text: $0.text) }
+            }
             try Task.checkCancellation()
-            return results.flatMap(\.segments).compactMap(Self.segment)
+            return result
         }
+    }
+
+    /// 録音ファイルの1秒ごとの最大振幅。
+    nonisolated static func secondPeaks(path: String) throws -> [Float] {
+        let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
+        let duration = Double(file.length) / file.fileFormat.sampleRate
+        let second = Int(Tuning.sampleRate)
+        var peaks: [Float] = []
+        for start in stride(from: 0.0, to: duration, by: 60) {
+            let samples = try AudioProcessor.loadAudioAsFloatArray(fromPath: path, startTime: start, endTime: min(start + 60, duration))
+            for i in stride(from: 0, to: samples.count, by: second) {
+                peaks.append(samples[i..<min(i + second, samples.count)].reduce(0) { max($0, abs($1)) })
+            }
+        }
+        return peaks
+    }
+
+    /// 1秒ごとの最大振幅から、認識にかける区間（秒）を決める。`minSilenceSeconds` 以上続く無音で区切る。
+    /// `maxRegionSeconds` を超える区間は、直近30秒でいちばん静かな秒の後ろで切る。
+    nonisolated static func speechRegions(peaks: [Float]) -> [Range<Int>] {
+        var regions: [Range<Int>] = []
+        var start: Int?
+        var lastSound = -1
+        for (i, peak) in peaks.enumerated() {
+            if peak > silencePeak {
+                if start == nil { start = i }
+                lastSound = i
+            } else if let s = start, i - lastSound >= minSilenceSeconds {
+                regions.append(s..<lastSound + 1)
+                start = nil
+            }
+            if let s = start, i + 1 - s >= maxRegionSeconds {
+                let cut = (i - 29...i).min { peaks[$0] < peaks[$1] }!
+                regions.append(s..<cut + 1)
+                start = cut < i ? cut + 1 : nil
+            }
+        }
+        if let s = start, s <= lastSound { regions.append(s..<lastSound + 1) }
+        return regions
     }
 
     func tokenCount(of text: String) async -> Int {
