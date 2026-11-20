@@ -10,8 +10,11 @@ import WhisperKit
 final class WhisperEngine: Transcribing {
     /// ライブ用。OpenAI の large-v3-turbo（2024-09-30 版）の量子化なし。
     static let liveVariant = "openai_whisper-large-v3-v20240930"
-    /// 最終パス用。large-v3 の量子化なし。
-    static let finalVariant = "openai_whisper-large-v3"
+    /// 最終パス用。ライブと同じ large-v3-turbo を、録音全体に対して30秒の窓でかけ直す（D60）。
+    /// large-v3 は実際の録音で窓ごと内容を落とすことがあり、処理も10倍以上遅かった。
+    /// ponytail: ライブ用とは別に読み込むので、両方が載っている間はメモリを 1.6 GB 余分に使う。
+    /// 1つを共有するなら、録音開始で中断された最終パスが完全に止まるのを待ってからライブに渡すこと。
+    static let finalVariant = liveVariant
     /// 確定できないまま音声がこの秒数たまったら、そこまでの認識結果を確定して捨てる（Whisper の窓は30秒）。
     static let maxLiveBufferSeconds = 25.0
     /// これより小さい振幅しかないバッファは無音として認識にかけない。
@@ -35,17 +38,17 @@ final class WhisperEngine: Transcribing {
         do {
             // モデルのフォルダにトークナイザーは入っていない。ここで取得しておけば、以後はオフラインでも読み込める。
             _ = try await loadedTokenizer()
-            let variants = [Self.liveVariant, Self.finalVariant]
+            let variants = Self.liveVariant == Self.finalVariant ? [Self.liveVariant] : [Self.liveVariant, Self.finalVariant]
             for (i, variant) in variants.enumerated() {
                 // 途中で切れたダウンロードを完了と見なさないよう、完了の印を置く。
                 let marker = Self.folder(variant).appending(path: ".visper-complete")
                 guard !FileManager.default.fileExists(atPath: marker.path) else { continue }
-                // ponytail: 進捗は2モデルを半分ずつに割る（実サイズは 1.6GB と 3.1GB）。気になれば重み付けする。
-                modelState = .downloading(Double(i) / 2)
+                // ponytail: モデルが複数あるとき、進捗は等分する。気になれば実サイズで重み付けする。
+                modelState = .downloading(Double(i) / Double(variants.count))
                 _ = try await WhisperKit.download(variant: variant, downloadBase: Self.downloadBase) { progress in
                     Task { @MainActor in
                         guard case .downloading = self.modelState else { return }
-                        self.modelState = .downloading((Double(i) + progress.fractionCompleted) / 2)
+                        self.modelState = .downloading((Double(i) + progress.fractionCompleted) / Double(variants.count))
                     }
                 }
                 FileManager.default.createFile(atPath: marker.path, contents: nil)
@@ -68,7 +71,7 @@ final class WhisperEngine: Transcribing {
                 do {
                     try await self.liveModel.use { kit in
                         // ライブは遅延を抑えるため、温度を上げた再試行を1回までにする。
-                        let decode = try await self.configure(kit, options, fallbacks: 1)
+                        let decode = try await self.configure(kit, options, fallbacks: 1, firstTokenThreshold: -1.5)
                         try await Self.runLive(
                             audio: audio,
                             transcribe: { buffer in
@@ -88,9 +91,9 @@ final class WhisperEngine: Transcribing {
 
     func finalPass(audioFile: URL, options: TranscriptionOptions) async throws -> [TranscribedSegment] {
         try await finalModel.use { kit in
-            let decode = try await self.configure(kit, options, fallbacks: 5)
+            let decode = try await self.configure(kit, options, fallbacks: 5, firstTokenThreshold: nil)
             let plain = options.glossary.isEmpty
-                ? nil : try await self.configure(kit, .init(language: options.language, glossary: ""), fallbacks: 5)
+                ? nil : try await self.configure(kit, .init(language: options.language, glossary: ""), fallbacks: 5, firstTokenThreshold: nil)
             // 無音を Whisper に渡すと「ご視聴ありがとうございました」のような実在しない文が出る（システム音声は
             // 何も鳴っていない間 0 が続く）。ライブと同じく、音のある区間だけを認識にかける。
             // 区間ごとに読むので、2時間の録音を一度にメモリへ載せることもない。
@@ -273,7 +276,9 @@ final class WhisperEngine: Transcribing {
         return text.isEmpty ? [] : tokenizer.encode(text: " " + text).filter { $0 < tokenizer.specialTokens.specialTokenBegin }
     }
 
-    private func configure(_ kit: WhisperKit, _ options: TranscriptionOptions, fallbacks: Int) async throws -> DecodingOptions {
+    /// `firstTokenThreshold`: WhisperKit は最初の1トークンの確率がこれより低いと、その窓（30秒）を無音扱いにして
+    /// 空で返す。最終パスでは、雑音や音楽で始まる窓や用語集つきの窓が丸ごと落ちたので使わない（無音は自前で除く）。
+    private func configure(_ kit: WhisperKit, _ options: TranscriptionOptions, fallbacks: Int, firstTokenThreshold: Float?) async throws -> DecodingOptions {
         let tokenizer = try await loadedTokenizer()
         kit.textDecoder.logitsFilters = [
             PromptTimestampFilter(specialTokens: tokenizer.specialTokens, decode: tokenizer.decode(tokens:)),
@@ -286,10 +291,7 @@ final class WhisperEngine: Transcribing {
             detectLanguage: language == nil,
             skipSpecialTokens: true,
             promptTokens: prompt,
-            // WhisperKit は最初の1トークンの確率が低いと、その窓を無音扱いにして空で返す。用語集（prompt）が
-            // あると出だしの確率が下がりやすく、発話があるのに結果が空になる。無音は自前で除いているので、
-            // 用語集があるときはこの判定を使わない（文全体の確率と反復の判定は残る）。
-            firstTokenLogProbThreshold: prompt.isEmpty ? -1.5 : nil)
+            firstTokenLogProbThreshold: firstTokenThreshold)
     }
 }
 
