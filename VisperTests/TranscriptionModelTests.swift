@@ -9,7 +9,8 @@ final class TranscriptionModelTests: XCTestCase {
     static let speech = "それでは今日のゼミを始めます。トランズモン量子ビットのデコヒーレンスについて話します。"
         + "T1は約100マイクロ秒、T2エコーはその半分程度でした。次に surface code の論理エラー率を見ていきます。"
         + "符号距離を3から5に上げるとエラー率が下がります。質問があればどうぞ。"
-    static let glossary = "トランズモン、デコヒーレンス、surface code、量子ビット、符号距離、T1、T2エコー"
+    static let questions = "次の質問です。この結果は再現できますか？はい、三回測って同じ値でした。ほかに質問はありますか？なければ終わります。"
+    static let glossary = "今日のゼミではトランズモン量子ビットのデコヒーレンス、T1、T2エコー、surface code、符号距離について話します。"
 
     func run(_ tool: String, _ arguments: String...) throws {
         let process = Process()
@@ -18,6 +19,14 @@ final class TranscriptionModelTests: XCTestCase {
         try process.run()
         process.waitUntilExit()
         XCTAssertEqual(process.terminationStatus, 0, "\(tool) \(arguments)")
+    }
+
+    func clip(_ name: String, _ text: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+        let aiff = directory.appending(path: "\(name).aiff"), m4a = directory.appending(path: "\(name).m4a")
+        try run("/usr/bin/say", "-v", "Kyoko", "-o", aiff.path, text)
+        try run("/usr/bin/afconvert", "-f", "m4af", "-d", "aac", aiff.path, m4a.path)
+        return m4a
     }
 
     func log(_ message: String) { print("VISPER: \(message)") }
@@ -52,11 +61,9 @@ final class TranscriptionModelTests: XCTestCase {
 
     func testRealModels() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["VISPER_MODEL_TESTS"] == "1")
-        let directory = FileManager.default.temporaryDirectory
-        let aiff = directory.appending(path: "visper-speech.aiff"), m4a = directory.appending(path: "visper-speech.m4a")
-        try run("/usr/bin/say", "-v", "Kyoko", "-o", aiff.path, Self.speech)
-        try run("/usr/bin/afconvert", "-f", "m4af", "-d", "aac", aiff.path, m4a.path)
+        let m4a = try clip("visper-speech", Self.speech)
         let samples = try AudioProcessor.loadAudioAsFloatArray(fromPath: m4a.path)
+        let questionSamples = try AudioProcessor.loadAudioAsFloatArray(fromPath: clip("visper-questions", Self.questions).path)
         let duration = Double(samples.count) / Tuning.sampleRate
         log(String(format: "audio %.1fs", duration))
 
@@ -75,10 +82,9 @@ final class TranscriptionModelTests: XCTestCase {
         // ライブ: 1回目はモデルの読み込みを含む。
         _ = try await live(engine, samples, glossary: "", realTime: false)
         let plain = try await live(engine, samples, glossary: "", realTime: false)
-        let prompted = try await live(engine, samples, glossary: Self.glossary, realTime: false)
         let realTime = try await live(engine, samples, glossary: Self.glossary, realTime: true)
         let auto = try await live(engine, samples, language: .auto, glossary: "", realTime: false)
-        for (name, result) in [("plain", plain), ("glossary", prompted), ("realTime", realTime), ("auto", auto)] {
+        for (name, result) in [("plain", plain), ("realTime", realTime), ("auto", auto)] {
             log("live \(name): \(lines(result))")
             let text = result.map(\.text).joined()
             XCTAssertTrue(text.contains("ゼミ"), name)
@@ -86,7 +92,13 @@ final class TranscriptionModelTests: XCTestCase {
             XCTAssertGreaterThan(result.count, 2, "用語集があっても文ごとに確定する: \(name)")
             XCTAssertEqual(result.map(\.start), result.map(\.start).sorted(), name)
             XCTAssertLessThanOrEqual(result.last?.end ?? .infinity, duration + 1, name)
+            XCTAssertTrue(text.contains("どうぞ"), "末尾が欠けない: \(name)")
         }
+        // 「？」で終わる文でも、用語集つきで文ごとに確定する。
+        let questions = try await live(engine, questionSamples, glossary: Self.glossary, realTime: false)
+        log("live questions: \(lines(questions))")
+        XCTAssertGreaterThanOrEqual(questions.count, 4)
+        XCTAssertTrue(questions.last?.text.contains("終わ") == true)
 
         // 最終パス: 1回目はモデルの読み込みを含む。
         for glossary in ["", Self.glossary] {
