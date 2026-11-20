@@ -79,7 +79,6 @@ final class MainWindowUITests: VisperUITestCase {
         }
         XCTAssertTrue(element("playButton").exists)
         XCTAssertFalse(element("provisionalNotice").exists)
-        saveScreenshot("main", windowContaining: "sessionTitle")
     }
 
     func testSearchFilters() {
@@ -140,7 +139,6 @@ final class SettingsUITests: VisperUITestCase {
         }
         XCTAssertTrue(element("glossaryCount").exists)
         XCTAssertFalse(element("glossaryWarning").exists)
-        saveScreenshot("settings", windowContaining: "glossaryEditor")
     }
 
     func testDisconnectedMicStaysSelected() {
@@ -204,8 +202,6 @@ final class LyricsUITests: VisperUITestCase {
         XCTAssertTrue(newestVisible(), "最新行に追従している")
         XCTAssertFalse(scroll.frame.intersects(lines.element(boundBy: 0).frame), "最初の行は上に流れた")
         XCTAssertFalse(element("jumpToLatest").exists)
-        saveScreenshot("lyrics", windowContaining: "lyricsScroll")
-        save(XCUIScreen.main.screenshot(), as: "screen-recording")
 
         scroll.scroll(byDeltaX: 0, deltaY: 300)
         XCTAssertTrue(element("jumpToLatest").waitForExistence(timeout: 5), "手動スクロールで追従が止まる")
@@ -222,5 +218,32 @@ final class LyricsUITests: VisperUITestCase {
 
         element("startStopButton").click()
         waitFor("待機中に戻る") { state == "待機中" }
+    }
+}
+
+/// 目視確認用のスクリーンショット（D31）。撮影できない環境でも動作のテストを落とさないよう、ここに分けてある。
+final class ScreenshotUITests: VisperUITestCase {
+    func testMainWindow() {
+        launch()
+        sessionTitle(firstTitle).click()
+        XCTAssertTrue(element("transcriptLine").waitForExistence(timeout: 5))
+        saveScreenshot("main", windowContaining: "sessionTitle")
+    }
+
+    func testSettings() {
+        launch(["-glossary", "トランズモン、surface code、デコヒーレンス"])
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(element("glossaryEditor").waitForExistence(timeout: 5))
+        saveScreenshot("settings", windowContaining: "glossaryEditor")
+    }
+
+    func testLyricsWhileRecording() {
+        launch(["-lyricsWindow"])
+        XCTAssertTrue(element("startStopButton").waitForExistence(timeout: 10))
+        element("startStopButton").click()
+        waitFor("画面からあふれる行数", timeout: 40) { elements("lyricsLine").count >= 18 }
+        saveScreenshot("lyrics", windowContaining: "lyricsScroll")
+        save(XCUIScreen.main.screenshot(), as: "screen-recording")
+        element("startStopButton").click()
     }
 }
