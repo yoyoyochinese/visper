@@ -56,7 +56,8 @@ final class SessionController {
             liveLines = []
             tentative = ""
             lastError = nil
-            let updates = transcriber.live(audio: stream, options: options(for: session))
+            // 用語集は最終パスだけに使う（turbo では効果がなく、更新が遅くなったため）。
+            let updates = transcriber.live(audio: stream, options: TranscriptionOptions(language: language, glossary: ""))
             liveTask = Task {
                 do {
                     for try await update in updates {

@@ -43,6 +43,12 @@ final class WhisperEngine: Transcribing {
                 }
                 FileManager.default.createFile(atPath: marker.path, contents: nil)
             }
+            // 使わなくなったモデル（モデルの変更や測定の残り）を消す。
+            let parent = Self.folder(Self.liveVariant).deletingLastPathComponent()
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: parent.path)) ?? []
+            where name.hasPrefix("openai_whisper-") && !variants.contains(name) {
+                try? FileManager.default.removeItem(at: parent.appending(path: name))
+            }
             modelState = .ready
         } catch {
             modelState = .failed(error.localizedDescription)

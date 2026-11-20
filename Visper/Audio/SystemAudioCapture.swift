@@ -330,7 +330,7 @@ final class SystemAudioCapture: AudioCapturing {
         let output = try defaultOutput()
         let outputUID = try string(output, kAudioDevicePropertyDeviceUID)
 
-        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: ownProcessObject())
         description.uuid = UUID()
         description.isPrivate = true
         try check(AudioHardwareCreateProcessTap(description, &tap), "システム音声の取り込みの開始")
@@ -401,6 +401,19 @@ final class SystemAudioCapture: AudioCapturing {
             listeners.append((object, address, block))
         }
         try check(AudioDeviceStart(source.device, proc), "音声の取り込みの開始")
+    }
+
+    /// 録音中に Visper で過去の録音を再生しても拾わないよう、自分のプロセスをタップから除外する。
+    private func ownProcessObject() -> [AudioObjectID] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var pid = getpid()
+        var object = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, UInt32(MemoryLayout<pid_t>.size), &pid, &size, &object)
+        return status == noErr && object != kAudioObjectUnknown ? [object] : []
     }
 
     private func defaultOutput() throws -> AudioObjectID {

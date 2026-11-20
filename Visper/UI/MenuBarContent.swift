@@ -72,13 +72,20 @@ struct MenuBarContent: View {
             }
             Divider()
 
-            Button("メインウィンドウを開く", systemImage: "macwindow") {
-                openWindow(id: "main")
-                NSApp.activate()
+            HStack {
+                Button("メインウィンドウを開く", systemImage: "macwindow") {
+                    openWindow(id: "main")
+                    NSApp.activate()
+                }
+                .accessibilityIdentifier("openMainWindow")
+                Spacer()
+                SettingsLink {
+                    Label("設定", systemImage: "gearshape")
+                }
+                .accessibilityIdentifier("openSettings")
             }
             .buttonStyle(.borderless)
             .padding(10)
-            .accessibilityIdentifier("openMainWindow")
         }
         .frame(width: 400, height: 520)
     }
