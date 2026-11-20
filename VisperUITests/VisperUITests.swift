@@ -41,7 +41,7 @@ class VisperUITestCase: XCTestCase {
 
     /// 指定した要素を含むウィンドウを撮って、テスト結果に添付する。テストランナーはリポジトリに
     /// 書けないので、`screenshots/` へは次のように取り出す:
-    /// `xcrun xcresulttool export attachments --path build/Logs/Test/<最新>.xcresult --output-path <出力先>`
+    /// `xcrun xcresulttool export attachments --path build.noindex/Logs/Test/<最新>.xcresult --output-path <出力先>`
     func saveScreenshot(_ name: String, windowContaining id: String) {
         save(app.windows.containing(.any, identifier: id).firstMatch.screenshot(), as: name)
     }
