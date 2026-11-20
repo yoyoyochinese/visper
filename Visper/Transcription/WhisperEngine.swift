@@ -18,6 +18,8 @@ final class WhisperEngine: Transcribing {
     nonisolated static let silencePeak: Float = 0.001
     /// 最終パスで、これ以上続いた無音は認識にかけない（秒）。短い間は文脈を保つため区間に含める。
     nonisolated static let minSilenceSeconds = 3
+    /// 最終パスの結果がこれより少ない文字数（1秒あたり）なら、用語集なしでやり直す。普通の発話は日本語で 5 前後、英語で 10 以上。
+    nonisolated static let minCharsPerSecond = 2.0
     /// 最終パスで一度に読み込んで認識にかける区間の上限（秒）。
     nonisolated static let maxRegionSeconds = 300
     /// サンドボックスのコンテナ内。
@@ -87,6 +89,8 @@ final class WhisperEngine: Transcribing {
     func finalPass(audioFile: URL, options: TranscriptionOptions) async throws -> [TranscribedSegment] {
         try await finalModel.use { kit in
             let decode = try await self.configure(kit, options, fallbacks: 5)
+            let plain = options.glossary.isEmpty
+                ? nil : try await self.configure(kit, .init(language: options.language, glossary: ""), fallbacks: 5)
             // 無音を Whisper に渡すと「ご視聴ありがとうございました」のような実在しない文が出る（システム音声は
             // 何も鳴っていない間 0 が続く）。ライブと同じく、音のある区間だけを認識にかける。
             // 区間ごとに読むので、2時間の録音を一度にメモリへ載せることもない。
@@ -102,8 +106,18 @@ final class WhisperEngine: Transcribing {
                     let end = loaded.lastIndex { abs($0) > Self.silencePeak } ?? -1
                     return Array(loaded[...end])
                 }.value
-                result += try await kit.transcribe(audioArray: samples, decodeOptions: decode)
+                var segments = try await kit.transcribe(audioArray: samples, decodeOptions: decode)
                     .flatMap(\.segments).compactMap(Self.segment)
+                // 用語集（prompt）があると、large-v3 が用語集の語句そのものを返したり、ほぼ空で返したりすることがある
+                // （音声と用語集の言語が違うときに起きやすい）。音声の長さに対して文字が少なすぎるときは、
+                // 用語集なしでやり直して長いほうを採る。
+                let chars = { (s: [TranscribedSegment]) in s.reduce(0) { $0 + $1.text.count } }
+                if let plain, Double(chars(segments)) < Double(samples.count) / Tuning.sampleRate * Self.minCharsPerSecond {
+                    let retry = try await kit.transcribe(audioArray: samples, decodeOptions: plain)
+                        .flatMap(\.segments).compactMap(Self.segment)
+                    if chars(retry) > chars(segments) { segments = retry }
+                }
+                result += segments
                     // 区間の外にはみ出した時刻の行は幻聴なので捨てる。
                     .filter { $0.start < length }
                     .map { TranscribedSegment(start: $0.start + offset, end: min($0.end, length) + offset, text: $0.text) }
@@ -265,12 +279,17 @@ final class WhisperEngine: Transcribing {
             PromptTimestampFilter(specialTokens: tokenizer.specialTokens, decode: tokenizer.decode(tokens:)),
         ]
         let language = options.language.whisperCode
+        let prompt = try await promptTokens(options.glossary)
         return DecodingOptions(
             language: language,
             temperatureFallbackCount: fallbacks,
             detectLanguage: language == nil,
             skipSpecialTokens: true,
-            promptTokens: try await promptTokens(options.glossary))
+            promptTokens: prompt,
+            // WhisperKit は最初の1トークンの確率が低いと、その窓を無音扱いにして空で返す。用語集（prompt）が
+            // あると出だしの確率が下がりやすく、発話があるのに結果が空になる。無音は自前で除いているので、
+            // 用語集があるときはこの判定を使わない（文全体の確率と反復の判定は残る）。
+            firstTokenLogProbThreshold: prompt.isEmpty ? -1.5 : nil)
     }
 }
 
