@@ -373,7 +373,10 @@ final class SystemAudioCapture: AudioCapturing {
             streams: streams, deviceInputs: try streamChannels(defaultOutput()),
             tapChannels: Int(asbd.mChannelsPerFrame),
             interleaved: asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0)
-        return Source(device: aggregate, sampleRate: asbd.mSampleRate, bufferCount: streams.count,
+        // IOProc には集約デバイスのレート（＝出力デバイスのレート）で届く。タップの形式のレートはこれと違うことがある
+        // （内蔵スピーカー 44.1 kHz に対してタップは 48 kHz）。
+        let rate = try property(aggregate, kAudioDevicePropertyNominalSampleRate, Float64(0), "システム音声のサンプルレートの取得")
+        return Source(device: aggregate, sampleRate: rate, bufferCount: streams.count,
                       channels: Self.channelRefs(streams: streams, range: range))
     }
 
